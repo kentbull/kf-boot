@@ -43,6 +43,7 @@ This will work if witness and watcher services are running on the same machine.
 - onboarding session metadata
 - account metadata
 - hosted witness and watcher allocation through local boot APIs
+- account access to configured Registrar and Observer services
 
 `kf-boot` does not own:
 
@@ -118,6 +119,7 @@ Approved-account routes:
 - `exn /account/witnesses`
 - `exn /account/watchers`
 - `exn /account/watchers/status`
+- `exn /account/services`
 - `exn /account/delete`
 - `exn /account/witnesses/delete`
 - `exn /account/watchers/delete`
@@ -125,6 +127,55 @@ Approved-account routes:
 
 There is no JSON bearer-session flow for these routes.
 There are no authenticated `qry` routes in this slice.
+
+## Registrar and Observer access
+
+Configure either or both services before starting kf-boot. Python and TypeScript
+backends use the same private enrollment API. Service processes and the fixed
+Observer-to-Registrar source permission remain operator-managed.
+
+```sh
+export KF_BOOT_REGISTRAR_BOOT_URL=http://127.0.0.1:19931
+export KF_BOOT_REGISTRAR_PUBLIC_URL=https://localhost:19932
+export KF_BOOT_REGISTRAR_SERVICE_AID="$REGISTRAR_AID"
+export KF_BOOT_REGISTRAR_CA_FILE=/absolute/path/to/ca.pem
+export KF_BOOT_OBSERVER_BOOT_URL=http://127.0.0.1:19941
+export KF_BOOT_OBSERVER_PUBLIC_URL=https://localhost:19942
+export KF_BOOT_OBSERVER_SERVICE_AID="$OBSERVER_AID"
+export KF_BOOT_OBSERVER_CA_FILE=/absolute/path/to/ca.pem
+```
+
+Use the actual service AIDs. Each declaration requires its boot URL, public URL
+and service AID together. Administration uses loopback HTTP; public URLs require
+HTTPS. Omit `CA_FILE` when the public service uses the client's normal system
+trust. When supplied, only public certificate PEM is retained and returned,
+never the server's file path or a private key.
+
+After onboarding completes, the permanent account signs an `exn` with route
+`/account/services` and empty attributes, sent to `POST /account`. An optional
+`account_aid` must equal that authenticated signer. The ephemeral onboarding AID
+cannot activate another identity's access.
+
+The signed reply contains `account_aid` and the normal asynchronous `operation`.
+Poll `/operations/status` as that account. A successful operation's `result`
+contains `account_aid` and `services`, keyed by `registrar` and/or `observer`.
+Each service contains `aid` (the enrolled account), `service` (the backend AID),
+`roles`, `url` and `ca_pem`. Registrar grants `publisher`; Observer grants
+`reader`. Clients must verify the provider reply before using these settings.
+Discovery and a configured public URL alone do not establish active access.
+
+Enrollment forwards accepted public KEL and delegation support through the
+service's ordinary verifier. Service authentication may use the account AID
+while submitted credential evidence retains a different issuer or group author;
+publisher permission does not confer issuer authority.
+
+Activation and deletion reuse the existing operation/resource stores. A retained
+resource identifies the account's grant, independently of the shared service
+AID. Cleanup retains its original backend URL, cancels queued activation and
+waits for an in-flight request before revoking access. An expiry during activation
+does not produce a successful capability. Account expiry or deletion removes
+these grants without removing public evidence or fixed source-observer permissions.
+Cleanup of an older onboarding session preserves a live account's access.
 
 ## Runtime Shape
 
