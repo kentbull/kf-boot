@@ -4,7 +4,11 @@ import pytest
 from falcon import testing
 from keri.app import habbing
 from keri.app.configing import Configer
-from keri.app.httping import CESR_ATTACHMENT_HEADER, CESR_CONTENT_TYPE
+from keri.app.httping import (
+    CESR_ATTACHMENT_HEADER,
+    CESR_CONTENT_TYPE,
+    CESR_GENUS_HEADER,
+)
 from keri.core import eventing
 from keri.kering import Kinds, Vrsn_1_0, Vrsn_2_0
 
@@ -124,7 +128,19 @@ def test_persisted_v1_boot_hab_accepts_v2_client_event(tmp_path):
             version=Vrsn_2_0,
             kind=Kinds.json,
         ) as (_, hab):
-            response = post_cesr(client, "/onboarding", hab.msgOwnInception())
+            body, attachment = split_cesr_message(hab.msgOwnInception())
+            headers = {
+                "Content-Type": CESR_CONTENT_TYPE,
+                CESR_ATTACHMENT_HEADER: attachment.decode("utf-8"),
+                CESR_GENUS_HEADER: "3",
+            }
+            refused = client.simulate_post("/onboarding", body=body, headers=headers)
+            assert refused.status_code == 400
+            assert hab.pre not in ctx.habery.kevers
+
+            headers[CESR_GENUS_HEADER] = "2"
+            response = client.simulate_post("/onboarding", body=body, headers=headers)
+            assert ctx.habery.kevers[hab.pre].serder.raw == body
 
         assert response.status_code == 204
     finally:
