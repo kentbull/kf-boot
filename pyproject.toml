@@ -17,10 +17,14 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest>=9.0.2",
+    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@d8826c39ee1c40f5c3b052c36b7b9db9d234780c",
+    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@0b73bcd14822b66b8de64012912b89e719104b93",
 ]
 dev = [
     "pytest>=9.0.2",
     "ruff==0.16.2",
+    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@d8826c39ee1c40f5c3b052c36b7b9db9d234780c",
+    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@0b73bcd14822b66b8de64012912b89e719104b93",
 ]
 
 [project.scripts]

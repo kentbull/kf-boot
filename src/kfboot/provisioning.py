@@ -5,17 +5,22 @@ from hashlib import blake2b
 from typing import Any
 
 import falcon
-from keri import help
+from keri import Vrsn_2_0, help
 
 from kfboot.basing import (
+    ACCOUNT_STATE_ONBOARDED,
+    BOOT_OPERATION_ACCOUNT_SERVICES,
+    BOOT_OPERATION_PENDING,
+    BOOT_OPERATION_RUNNING,
     SESSION_STATE_CANCELLED,
     SESSION_STATE_EXPIRED,
     SESSION_STATE_FAILED,
     SESSION_STATE_WITNESS_POOL_ALLOCATED,
     TERMINAL_SESSION_STATES,
+    ResourceRecord,
     SessionRecord,
 )
-from kfboot.boot_client import BootError
+from kfboot.boot_client import BootError, HioBootClient
 from kfboot.store import (
     makeRecord,
     nowIso,
@@ -31,10 +36,110 @@ class Provisioner:
         self.exchanger = exchanger
         self.cleanup_witness_boots: dict[str, Any] = {}
         self.cleanup_watcher_boot: Any | None = None
+        self.cleanup_registry_boots: dict[str, Any] = {}
+        self.cleanup_registry_clienter: Any | None = None
 
-    def configureCleanupBootClients(self, *, witness_boots, watcher_boot) -> None:
+    def configureCleanupBootClients(self, *, witness_boots, watcher_boot,
+                                   registry_boots=None, registry_clienter=None) -> None:
         self.cleanup_witness_boots = witness_boots
         self.cleanup_watcher_boot = watcher_boot
+        self.cleanup_registry_boots = registry_boots or {}
+        self.cleanup_registry_clienter = registry_clienter
+
+    def _serviceAccount(self, account_aid):
+        """Recheck permanent-account eligibility around every yielded backend call."""
+        try:
+            account = self.exchanger.requireOnboardedAccount(account_aid, {})
+            self.exchanger.requireNoAccountDeletePending(account_aid)
+        except falcon.HTTPError as ex:
+            raise BootError(ex.description or ex.title, status_code=ex.status_code) from ex
+        return account
+
+    def _registryClient(self, kind, boot_url, *, registry_boots=None, registry_clienter=None):
+        """Use the caller's HTTP owner, retaining the original activation URL for cleanup."""
+        boots = self.cleanup_registry_boots if registry_boots is None else registry_boots
+        configured = boots.get(kind)
+        if configured is not None and configured.base_url == boot_url:
+            return configured
+        clienter = self.cleanup_registry_clienter if registry_clienter is None else registry_clienter
+        if clienter is None:
+            raise BootError("Credential-service HTTP client is not configured", status_code=503)
+        return HioBootClient(boot_url, clienter=clienter,
+                             timeout=self.ctx.config.boot_api_timeout_seconds)
+
+    def provisionAccountServicesDo(self, *, account_aid, services, operation_id,
+                                  registry_boots=None, registry_clienter=None, tymth, tock=0.0):
+        """Activate only the account signer; public KEL is exported from accepted local state."""
+        if (not services or len(set(services)) != len(services)
+                or any(kind not in ("registrar", "observer") for kind in services)):
+            raise BootError("Invalid credential-service selection", status_code=400)
+        account = self._serviceAccount(account_aid)
+        kever = self.ctx.habery.kevers.get(account_aid)
+        if kever is None:
+            raise BootError("Accepted account KEL is unavailable", status_code=409)
+        kel = bytearray()
+        for raw in self.ctx.habery.db.cloneDelegation(kever, gvrsn=Vrsn_2_0):
+            kel.extend(raw)
+        for raw in self.ctx.habery.db.clonePreIter(account_aid, gvrsn=Vrsn_2_0):
+            kel.extend(raw)
+        capabilities = {}
+        for kind in services:
+            account = self._serviceAccount(account_aid)
+            backend = getattr(self.ctx.config, kind, None)
+            if backend is None:
+                raise BootError(f"{kind} is no longer configured", status_code=409)
+            role = "publisher" if kind == "registrar" else "reader"
+            record = self.ctx.store.getResource(kind, account_aid)
+            if record is not None and (
+                    record.principal != account_aid or record.cid != account_aid
+                    or (record.boot_url, record.url, record.service_aid, record.ca_pem)
+                    != (backend.boot_url, backend.public_url, backend.service_aid, backend.ca_pem)):
+                raise BootError("Retained service activation differs from configured backend", status_code=409)
+            if record is None:
+                record = ResourceRecord(kind=kind, eid=account_aid, cid=account_aid,
+                    principal=account_aid, backend_id=kind,
+                    url=backend.public_url, boot_url=backend.boot_url,
+                    service_aid=backend.service_aid, ca_pem=backend.ca_pem,
+                    status="pending", created_at=nowIso())
+            # Record cleanup debt before a remote side effect, including a lost response.
+            self.ctx.store.saveResource(record)
+            if account.resources_cleaned_at:
+                account.resources_cleaned_at = ""
+                self.ctx.store.saveAccount(account)
+            client = self._registryClient(kind, record.boot_url,
+                registry_boots=registry_boots, registry_clienter=registry_clienter)
+            try:
+                accepted = yield from client.enrollAccountDo(account_aid, [role], kel.decode("utf-8"),
+                    idempotency_key=f"{operation_id}:{kind}", tymth=tymth, tock=tock)
+            except BootError as ex:
+                # Signed operation status must not expose private backend URLs or response bodies.
+                raise BootError(f"{kind} account enrollment failed", status_code=ex.status_code) from ex
+            self._serviceAccount(account_aid)
+            if (not isinstance(accepted, dict) or accepted.get("aid") != account_aid
+                    or accepted.get("roles") != [role] or accepted.get("service") != record.service_aid):
+                raise BootError("Credential-service activation acknowledgement differs from request", status_code=409)
+            record.status = "active"
+            self.ctx.store.saveResource(record)
+            capabilities[kind] = {"aid": account_aid, "roles": [role], "service": record.service_aid,
+                                  "url": record.url, "ca_pem": record.ca_pem}
+        self._serviceAccount(account_aid)
+        return {"account_aid": account_aid, "services": capabilities}
+
+    def _stopServiceActivation(self, account_aid):
+        """Cancel queued enrollment; let an in-flight request finish before deletion can overtake it."""
+        if not account_aid:
+            return
+        running = False
+        for operation in self.ctx.store.listBootOperations(
+                kind=BOOT_OPERATION_ACCOUNT_SERVICES, subject=f"account:{account_aid}", requester=account_aid):
+            if operation.state == BOOT_OPERATION_PENDING:
+                self.ctx.store.failBootOperation(operation.operation_id,
+                    last_error="Account cleanup cancelled pending service activation",
+                    result={"status_code": 409})
+            elif operation.state == BOOT_OPERATION_RUNNING:
+                running = True
+        if running:
+            raise BootError("Account service activation is still running", status_code=425)
 
     def provisionSessionResourcesDo(
         self,
@@ -358,6 +463,14 @@ class Provisioner:
         tock: float = 0.0,
     ):
         operations = self._sessionResourceDeleteOps(session=session, account=account)
+        current = self.ctx.store.getAccount(session.account_aid) if session.account_aid else None
+        if (current is None or current.status != ACCOUNT_STATE_ONBOARDED
+                or self.exchanger.accountPastDue(current)):
+            # Old terminal sessions do not own a live account's service permissions.
+            self._stopServiceActivation(session.account_aid)
+            operations[:0] = [(kind, record.eid) for kind in ("registrar", "observer")
+                              for record in self.ctx.store.listResourcesForAccount(
+                                  kind=kind, account_aid=session.account_aid)]
         logger.info(
             f"Session resource teardown started for session {session.session_id}"
         )
@@ -383,6 +496,7 @@ class Provisioner:
         tymth,
         tock: float = 0.0,
     ):
+        self._stopServiceActivation(account_aid)
         sessions = self.ctx.store.listSessionsForAccount(account_aid)
         operations = self._accountResourceDeleteOps(
             account_aid=account_aid,
@@ -418,9 +532,12 @@ class Provisioner:
         account=None,
         witness_boots=None,
         watcher_boot=None,
+        registry_boots=None,
+        registry_clienter=None,
         tymth,
         tock: float = 0.0,
     ):
+        self._stopServiceActivation(account_aid)
         sessions = self.ctx.store.listSessionsForAccount(account_aid)
         operations = self._accountResourceDeleteOps(
             account_aid=account_aid,
@@ -437,6 +554,8 @@ class Provisioner:
             context=f"account {account_aid} deletion",
             witness_boots=witness_boots,
             watcher_boot=watcher_boot,
+            registry_boots=registry_boots,
+            registry_clienter=registry_clienter,
             tymth=tymth,
             tock=tock,
         )
@@ -480,7 +599,9 @@ class Provisioner:
             account=account,
             sessions=sessions,
         )
-        return self._resourceDeleteOps(watcher_ids=watcher_ids, witness_ids=witness_ids)
+        services = [(kind, record.eid) for kind in ("registrar", "observer")
+                    for record in self.ctx.store.listResourcesForAccount(kind=kind, account_aid=account_aid)]
+        return services + self._resourceDeleteOps(watcher_ids=watcher_ids, witness_ids=witness_ids)
 
     @staticmethod
     def _resourceDeleteOps(*, watcher_ids: list[str], witness_ids: list[str]) -> list[tuple[str, str]]:
@@ -501,6 +622,8 @@ class Provisioner:
         context: str,
         witness_boots=None,
         watcher_boot=None,
+        registry_boots=None,
+        registry_clienter=None,
         tymth,
         tock: float = 0.0,
     ):
@@ -516,6 +639,8 @@ class Provisioner:
                     tolerate_missing_remote=True,
                     witness_boots=witness_boots,
                     watcher_boot=watcher_boot,
+                    registry_boots=registry_boots,
+                    registry_clienter=registry_clienter,
                     tymth=tymth,
                     tock=tock,
                 )
@@ -630,6 +755,8 @@ class Provisioner:
         tolerate_missing_remote: bool = False,
         witness_boots=None,
         watcher_boot=None,
+        registry_boots=None,
+        registry_clienter=None,
         tymth,
         tock: float = 0.0,
     ):
@@ -650,11 +777,19 @@ class Provisioner:
                 record,
                 witness_boots=boots,
             ).deleteWitnessDo
-        else:
+        elif kind == "watcher":
             boot = self.cleanup_watcher_boot if watcher_boot is None else watcher_boot
             if boot is None:
                 raise BootError("Cleanup watcher boot client is not configured.", status_code=503)
             delete_remote = boot.deleteWatcherDo
+        elif kind in ("registrar", "observer"):
+            if record.eid != record.principal or record.cid != record.principal:
+                raise BootError("Credential-service enrollment has inconsistent account coordinates", status_code=409)
+            self._stopServiceActivation(record.principal)
+            delete_remote = self._registryClient(kind, record.boot_url,
+                registry_boots=registry_boots, registry_clienter=registry_clienter).deleteAccountDo
+        else:
+            raise BootError("Unsupported resource kind", status_code=400)
         logger.info(
             f"Resource deletion started for {kind} with EID {eid}",
         )
@@ -665,6 +800,8 @@ class Provisioner:
                 logger.warning(
                     f"Resource deletion failed for {kind} with EID {eid}: {exc}",
                 )
+                if kind in ("registrar", "observer"):
+                    raise BootError(f"{kind} account revocation failed", status_code=exc.status_code) from exc
                 raise
             logger.info(
                 f"Resource not found during deletion for {kind} with EID {eid}, but tolerated: {exc}",
@@ -697,13 +834,13 @@ class Provisioner:
         if session is not None:
             if kind == "witness":
                 session.witness_eids = [item for item in session.witness_eids if item != eid]
-            elif session.watcher_eid == eid:
+            elif kind == "watcher" and session.watcher_eid == eid:
                 session.watcher_eid = ""
 
         if account is not None:
             if kind == "witness":
                 account.witness_eids = [item for item in account.witness_eids if item != eid]
-            elif account.watcher_eid == eid:
+            elif kind == "watcher" and account.watcher_eid == eid:
                 account.watcher_eid = ""
 
     def _persistOwnerState(

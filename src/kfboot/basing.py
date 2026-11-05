@@ -34,6 +34,7 @@ BOOT_OPERATION_SESSION_PROVISION = "session_provision"
 BOOT_OPERATION_WATCHER_STATUS_QUERY = "watcher_status_query"
 BOOT_OPERATION_RESOURCE_DELETE = "resource_delete"
 BOOT_OPERATION_ACCOUNT_DELETE = "account_delete"
+BOOT_OPERATION_ACCOUNT_SERVICES = "account_services"
 
 BOOT_OPERATION_PENDING = "pending"
 BOOT_OPERATION_RUNNING = "running"
@@ -72,6 +73,9 @@ class ResourceRecord:
     oobis: list[str] = field(default_factory=list)
     status: str = ""
     created_at: str = ""
+    # Credential-service resources are keyed by enrolled account, not shared service AID.
+    service_aid: str = ""
+    ca_pem: str = ""
 
 
 @dataclass(frozen=True)

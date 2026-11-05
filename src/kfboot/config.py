@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
+import ssl
 from dataclasses import dataclass
+from pathlib import Path
+from urllib.parse import urlsplit
 
 from keri import help
+from keri.core import Prefixer
+from keri.kering import KeriError
 
 logger = help.ogler.getLogger(__name__)
 
@@ -50,6 +57,7 @@ ONBOARDING_QUOTA_ROUTES = {
 }
 
 ACCOUNT_ROUTES = {
+    "/account/services",
     "/operations/status",
     "/account/witnesses",
     "/account/watchers",
@@ -60,6 +68,7 @@ ACCOUNT_ROUTES = {
 }
 
 ACCOUNT_QUOTA_ROUTES = {
+    "/account/services",
     "/account/witnesses",
     "/account/watchers",
     "/account/watchers/status",
@@ -221,6 +230,72 @@ def _parse_witness_backends(value: str) -> tuple[WitnessBackend, ...]:
 
 
 @dataclass(frozen=True)
+class RegistryBackend:
+    """One fixed registry service with loopback administration and public HTTPS trust."""
+    boot_url: str
+    public_url: str
+    service_aid: str
+    ca_pem: str = ""
+
+    def __post_init__(self) -> None:
+        boot_url, public_url = self.boot_url.strip(), self.public_url.strip()
+        try:
+            boot, public = urlsplit(boot_url), urlsplit(public_url)
+            for value, target in ((boot_url, boot), (public_url, public)):
+                if (not target.hostname or target.username is not None or target.password is not None
+                        or "?" in value or "#" in value or "\\" in value
+                        or (target.port is not None and not 1 <= target.port <= 65535)):
+                    raise ValueError("Registry service URLs require a host and no credentials, query or fragment.")
+            if any(character.isspace() for character in boot_url + public_url):
+                raise ValueError("Registry service URLs must not contain whitespace.")
+            if boot.hostname == "localhost":
+                loopback = True
+            else:
+                loopback = ipaddress.ip_address(boot.hostname).is_loopback
+            if boot.scheme != "http" or not loopback:
+                raise ValueError("Registry boot_url must use loopback HTTP.")
+            if public.scheme != "https":
+                raise ValueError("Registry public_url must use HTTPS.")
+        except ValueError as exc:
+            raise ValueError(f"Invalid registry backend URL: {exc}") from exc
+        try:
+            if Prefixer(qb64=self.service_aid).qb64 != self.service_aid:
+                raise ValueError("service_aid must be one complete AID.")
+        except (KeriError, ValueError, TypeError) as exc:
+            raise ValueError("Registry service_aid must be one complete AID.") from exc
+        ca_pem = ""
+        if self.ca_pem:
+            # Retain certificates only, even when an operator supplies a combined public test PEM.
+            certificates = re.findall(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+                                      self.ca_pem, flags=re.DOTALL)
+            if not certificates:
+                raise ValueError("Registry CA PEM must contain a certificate.")
+            ca_pem = "\n".join(certificates) + "\n"
+            try:
+                ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_verify_locations(cadata=ca_pem)
+            except ssl.SSLError as exc:
+                raise ValueError("Registry CA PEM is invalid.") from exc
+        object.__setattr__(self, "boot_url", _normalize_url(boot_url))
+        object.__setattr__(self, "public_url", _normalize_url(public_url))
+        object.__setattr__(self, "ca_pem", ca_pem)
+
+
+def _registry_backend_from_env(service: str) -> RegistryBackend | None:
+    """Load one optional registrar/observer declaration without retaining its CA file path."""
+    boot_url = _env(f"{service}_BOOT_URL", "").strip()
+    public_url = _env(f"{service}_PUBLIC_URL", "").strip()
+    service_aid = _env(f"{service}_SERVICE_AID", "").strip()
+    ca_file = _env(f"{service}_CA_FILE", "").strip()
+    if not any((boot_url, public_url, service_aid, ca_file)):
+        return None
+    if not all((boot_url, public_url, service_aid)):
+        raise ValueError(f"KF_BOOT_{service} requires BOOT_URL, PUBLIC_URL and SERVICE_AID together.")
+    ca_pem = Path(ca_file).expanduser().read_text() if ca_file else ""
+    return RegistryBackend(boot_url=boot_url, public_url=public_url,
+                           service_aid=service_aid, ca_pem=ca_pem)
+
+
+@dataclass(frozen=True)
 class Config:
     host: str
     port: int
@@ -251,6 +326,8 @@ class Config:
     session_ttl_seconds: int
     # Per-bootstrap-option account policy definitions such as tier and request budgets
     account_profiles: tuple[AccountProfile, ...] = ()
+    registrar: RegistryBackend | None = None
+    observer: RegistryBackend | None = None
     # Configured witness boot backends that can allocate hosted witnesses
     witness_backends: tuple[WitnessBackend, ...] = ()
     # Request rate limit applied to bootstrap API traffic from a single IP
@@ -506,6 +583,8 @@ class Config:
             session_ttl_seconds=int(_env("SESSION_TTL_SECONDS", "300")),
             account_profiles=account_profiles,
             witness_backends=witness_backends,
+            registrar=_registry_backend_from_env("REGISTRAR"),
+            observer=_registry_backend_from_env("OBSERVER"),
             bootstrap_api_requests_per_minute=int(
                 _env("BOOTSTRAP_API_REQUESTS_PER_MINUTE", "10")
             ),

@@ -447,10 +447,14 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "kf-observer" },
+    { name = "kf-registrar" },
     { name = "pytest" },
     { name = "ruff" },
 ]
 test = [
+    { name = "kf-observer" },
+    { name = "kf-registrar" },
     { name = "pytest" },
 ]
 
@@ -458,12 +462,38 @@ test = [
 requires-dist = [
     { name = "falcon", specifier = ">=4.0.2" },
     { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=b01b1324998f0d21c8211659def8b500964fe8db" },
+    { name = "kf-observer", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-observer.git?rev=0b73bcd14822b66b8de64012912b89e719104b93" },
+    { name = "kf-observer", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-observer.git?rev=0b73bcd14822b66b8de64012912b89e719104b93" },
+    { name = "kf-registrar", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-registrar.git?rev=d8826c39ee1c40f5c3b052c36b7b9db9d234780c" },
+    { name = "kf-registrar", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-registrar.git?rev=d8826c39ee1c40f5c3b052c36b7b9db9d234780c" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
     { name = "requests", specifier = ">=2.32.3" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.2" },
 ]
 provides-extras = ["test", "dev"]
+
+[[package]]
+name = "kf-observer"
+version = "0.0.1"
+source = { git = "https://github.com/kentbull/kf-observer.git?rev=0b73bcd14822b66b8de64012912b89e719104b93#0b73bcd14822b66b8de64012912b89e719104b93" }
+dependencies = [
+    { name = "falcon" },
+    { name = "hio" },
+    { name = "keri" },
+    { name = "multicommand" },
+]
+
+[[package]]
+name = "kf-registrar"
+version = "0.0.1"
+source = { git = "https://github.com/kentbull/kf-registrar.git?rev=d8826c39ee1c40f5c3b052c36b7b9db9d234780c#d8826c39ee1c40f5c3b052c36b7b9db9d234780c" }
+dependencies = [
+    { name = "falcon" },
+    { name = "hio" },
+    { name = "keri" },
+    { name = "multicommand" },
+]
 
 [[package]]
 name = "lmdb"

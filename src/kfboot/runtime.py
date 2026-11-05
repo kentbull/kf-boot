@@ -44,12 +44,20 @@ def build_doers(app, ctx: Context) -> list:
         clienter=operation_clienter,
         timeout=ctx.config.boot_api_timeout_seconds,
     )
+    operation_registry_boots = {
+        kind: HioBootClient(backend.boot_url, clienter=operation_clienter,
+                            timeout=ctx.config.boot_api_timeout_seconds)
+        for kind in ("registrar", "observer")
+        if (backend := getattr(ctx.config, kind, None)) is not None
+    }
     service_doers.append(
         BootOperationDoer(
             store=ctx.store,
             witness_boots=operation_witness_boots,
             watcher_boot=operation_watcher_boot,
-            processor=BootOperationProcessor(provisioner=ctx.exchanger.provisioner),
+            registry_boots=operation_registry_boots,
+            processor=BootOperationProcessor(provisioner=ctx.exchanger.provisioner,
+                                             registry_clienter=operation_clienter),
             clienter=operation_clienter,
             failure_max_attempts=ctx.config.operation_failure_max_attempts,
         )
@@ -70,9 +78,17 @@ def build_doers(app, ctx: Context) -> list:
             clienter=clienter,
             timeout=ctx.config.boot_api_timeout_seconds,
         )
+        cleanup_registry_boots = {
+            kind: HioBootClient(backend.boot_url, clienter=clienter,
+                                timeout=ctx.config.boot_api_timeout_seconds)
+            for kind in ("registrar", "observer")
+            if (backend := getattr(ctx.config, kind, None)) is not None
+        }
         ctx.exchanger.provisioner.configureCleanupBootClients(
             witness_boots=cleanup_witness_boots,
             watcher_boot=cleanup_watcher_boot,
+            registry_boots=cleanup_registry_boots,
+            registry_clienter=clienter,
         )
         service_doers.append(
             CleanupDoer(

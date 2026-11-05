@@ -9,6 +9,7 @@ from keri import help
 
 from kfboot.basing import (
     BOOT_OPERATION_ACCOUNT_DELETE,
+    BOOT_OPERATION_ACCOUNT_SERVICES,
     BOOT_OPERATION_RESOURCE_DELETE,
     BOOT_OPERATION_SESSION_PROVISION,
     BOOT_OPERATION_WATCHER_STATUS_QUERY,
@@ -22,8 +23,19 @@ logger = help.ogler.getLogger(__name__)
 @dataclass(frozen=True)
 class BootOperationProcessor:
     provisioner: Any
+    registry_clienter: Any | None = None
 
-    def processBootOperationDo(self, *, operation, witness_boots, watcher_boot, tymth, tock: float = 0.0):
+    def processBootOperationDo(self, *, operation, witness_boots, watcher_boot,
+                              registry_boots=None, tymth, tock: float = 0.0):
+        if operation.kind == BOOT_OPERATION_ACCOUNT_SERVICES:
+            account_aid = str(operation.payload.get("account_aid") or "")
+            if not account_aid or operation.requester != account_aid:
+                raise BootError("Service operation must belong to its enrolled account", status_code=400)
+            return (yield from self.provisioner.provisionAccountServicesDo(
+                account_aid=account_aid, services=operation.payload.get("services"),
+                registry_boots=registry_boots, registry_clienter=self.registry_clienter,
+                operation_id=operation.operation_id, tymth=tymth, tock=tock,
+            ))
         if operation.kind == BOOT_OPERATION_SESSION_PROVISION:
             session_id = str(operation.payload.get("session_id") or operation.subject)
             session = self.provisioner.ctx.store.getSession(session_id)
@@ -106,6 +118,9 @@ class BootOperationProcessor:
                 session.session_id
                 for session in self.provisioner.ctx.store.listSessionsForAccount(account_aid)
             ]
+            registry_args = {}
+            if registry_boots or self.registry_clienter is not None:
+                registry_args = {"registry_boots": registry_boots, "registry_clienter": self.registry_clienter}
             yield from self.provisioner.deleteAccountDo(
                 account_aid=account_aid,
                 account=account,
@@ -113,6 +128,7 @@ class BootOperationProcessor:
                 watcher_boot=watcher_boot,
                 tymth=tymth,
                 tock=tock,
+                **registry_args,
             )
             return {
                 "account_aid": account_aid,
@@ -130,6 +146,7 @@ class BootOperationDoer(doing.DoDoer):
         store,
         witness_boots: dict[str, Any] | None = None,
         watcher_boot=None,
+        registry_boots: dict[str, Any] | None = None,
         processor=None,
         clienter=None,
         interval: float = 0.05,
@@ -142,6 +159,7 @@ class BootOperationDoer(doing.DoDoer):
         self.store = store
         self.witness_boots = witness_boots or {}
         self.watcher_boot = watcher_boot
+        self.registry_boots = registry_boots or {}
         self.processor = processor
         self.clienter = clienter
         self.interval = interval
@@ -194,12 +212,14 @@ class BootOperationDoer(doing.DoDoer):
                 if not hasattr(self.processor, "processBootOperationDo"):
                     raise BootError("Boot operation processor is missing processBootOperationDo.", status_code=503)
 
+                registry_args = {"registry_boots": self.registry_boots} if self.registry_boots else {}
                 result = yield from self.processor.processBootOperationDo(
                     operation=operation,
                     witness_boots=self.witness_boots,
                     watcher_boot=self.watcher_boot,
                     tymth=tymth,
                     tock=tock,
+                    **registry_args,
                 )
                 if result is None:
                     result = {}

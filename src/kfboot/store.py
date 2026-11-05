@@ -1500,7 +1500,8 @@ class Store:
         )
         candidates.extend(
             record.eid
-            for record in self.listResourcesForAccount(kind="watcher", account_aid=account.account_aid)
+            for kind in ("watcher", "registrar", "observer")
+            for record in self.listResourcesForAccount(kind=kind, account_aid=account.account_aid)
         )
         for session in sessions:
             candidates.extend(self._sessionLocalResourceIds(session))
@@ -1523,7 +1524,8 @@ class Store:
         ]
         candidates.extend(
             record.eid
-            for record in self.listResourcesForAccount(kind="watcher", account_aid=account_aid)
+            for kind in ("watcher", "registrar", "observer")
+            for record in self.listResourcesForAccount(kind=kind, account_aid=account_aid)
         )
         for session in sessions:
             candidates.extend(self._sessionLocalResourceIds(session))

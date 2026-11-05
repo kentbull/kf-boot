@@ -16,6 +16,7 @@ from kfboot.basing import (
     ACCOUNT_STATE_ONBOARDED,
     ACCOUNT_STATE_PENDING_ONBOARDING,
     BOOT_OPERATION_ACCOUNT_DELETE,
+    BOOT_OPERATION_ACCOUNT_SERVICES,
     BOOT_OPERATION_FAILED,
     BOOT_OPERATION_PENDING,
     BOOT_OPERATION_RESOURCE_DELETE,
@@ -514,6 +515,40 @@ class CancelHandler(RouteHandler):
         self.exchanger.replySession(self.resource, receiver=sender, session=session)
 
 
+class AccountServicesHandler(RouteHandler):
+    """A permanent account explicitly authorizes its own credential-service access."""
+    resource = "/account/services"
+
+    def verifyEvent(self, serder, **kwa) -> bool:
+        payload = extractExnPayload(serder)
+        if set(payload) - {"account_aid"}:
+            raise falcon.HTTPBadRequest(description="services enroll only the authenticated account AID")
+        self.exchanger.requireOnboardedAccount(serder.pre, payload)
+        self.exchanger.requireNoAccountDeletePending(serder.pre)
+        self.exchanger.limiter.precheckAccountQuotas(serder)
+        return True
+
+    def handleEvent(self, serder, **kwa):
+        sender = serder.pre
+        account = self.exchanger.requireOnboardedAccount(sender, extractExnPayload(serder))
+        self.exchanger.requireNoAccountDeletePending(sender)
+        services = [kind for kind in ("registrar", "observer")
+                    if getattr(self.exchanger.ctx.config, kind, None) is not None]
+        if not services:
+            raise falcon.HTTPServiceUnavailable(description="credential services are not configured")
+        operation = self.exchanger.ctx.store.ensureBootOperation(
+            kind=BOOT_OPERATION_ACCOUNT_SERVICES,
+            subject=f"account:{sender}", requester=sender, route=self.resource,
+            payload={"account_aid": sender, "services": services}, due_at=nowIso(),
+        )
+        self.exchanger.expirer.refreshAccountLease(account)
+        self.exchanger.limiter.recordSuccessfulAccountQuotaUse(serder)
+        self.exchanger.queueReply(self.resource, sender, {
+            "account_aid": sender,
+            "operation": self.exchanger.ctx.store.bootOperationPayload(operation),
+        })
+
+
 class AccountWitnessesHandler(RouteHandler):
     resource = "/account/witnesses"
 
@@ -879,6 +914,7 @@ class BootExchanger(Exchanger):
             CancelHandler(self),
             AccountWitnessesHandler(self),
             AccountWatchersHandler(self),
+            AccountServicesHandler(self),
             AccountWatcherStatusHandler(self),
             OperationStatusHandler(self),
             AccountDeleteHandler(self),

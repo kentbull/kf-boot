@@ -64,6 +64,21 @@ class HioBootClient:
         )
         return _responseJson(response)
 
+    def enrollAccountDo(
+        self, aid: str, roles: list[str] | tuple[str, ...], kel: str,
+        *, tymth, tock: float = 0.0, idempotency_key: str = "",
+    ):
+        """Enroll exactly the supplied public KEL and roles through the private service API."""
+        response = yield from self._requestDo(
+            "PUT", f"/accounts/{aid}", json={"roles": list(roles), "kel": kel},
+            idempotency_key=idempotency_key, tymth=tymth, tock=tock,
+        )
+        return _responseJson(response)
+
+    def deleteAccountDo(self, aid: str, *, tymth, tock: float = 0.0):
+        """Revoke one dynamic service enrollment; the backend owns idempotent deletion."""
+        yield from self._emptyDo("DELETE", f"/accounts/{aid}", tymth=tymth, tock=tock)
+
     def watcherStatusDo(self, eid: str, *, tymth, tock: float = 0.0):
         response = yield from self._requestDo(
             "GET",
