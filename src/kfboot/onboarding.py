@@ -4,7 +4,12 @@ import json
 
 import falcon
 from keri import help
-from keri.app.httping import CESR_ATTACHMENT_HEADER, CESR_CONTENT_TYPE, CesrRequest
+from keri.app.httping import (
+    CESR_ATTACHMENT_HEADER,
+    CESR_CONTENT_TYPE,
+    CESR_GENUS_HEADER,
+    CesrRequest,
+)
 from keri.core import serdering
 from keri.kering import (
     Ilks,
@@ -12,6 +17,8 @@ from keri.kering import (
     MissingSenderKeyStateError,
     MissingSignatureError,
     ValidationError,
+    Vrsn_1_0,
+    Vrsn_2_0,
 )
 
 from kfboot.config import ACCOUNT_ROUTES, ONBOARDING_ROUTES
@@ -34,7 +41,7 @@ class CesrSurfaceEnd:
         rep.set_header("Cache-Control", "no-cache")
 
         cr = _parseCesrHttpRequest(req=req, surface=self.surface)
-        serder = serdering.SerderKERI(sad=cr.payload)
+        serder = serdering.SerderKERI(raw=cr.body)
         route = str(serder.ked.get("r", "") or "")
         logger.info(
             f"CESR request received: ilk={serder.ilk!s}\n"
@@ -55,8 +62,7 @@ class CesrSurfaceEnd:
                 ),
             )
 
-        msg = bytearray(serder.raw)
-        msg.extend(cr.attachments.encode("utf-8"))
+        msg = bytearray(cr.stream)
 
         self.ctx.exchanger.setClientIp(_clientIp(req.remote_addr))
         self.ctx.exchanger.clearReplies()
@@ -66,7 +72,7 @@ class CesrSurfaceEnd:
                 ims=msg,
                 exc=self.ctx.exchanger,
                 local=False,
-                version=serder.pvrsn,
+                version=cr.genus or serder.pvrsn,
             )
         except falcon.HTTPError:
             raise
@@ -174,8 +180,13 @@ def _parseCesrHttpRequest(req: falcon.Request, *, surface: str) -> CesrRequest:
             description="Unacceptable content type.",
         )
 
+    genus = req.headers.get(CESR_GENUS_HEADER)
+    if genus is not None and genus not in ("1", "2"):
+        raise falcon.HTTPBadRequest(description="CESR-Genus must be 1 or 2")
+
+    body = req.bounded_stream.read()
     try:
-        data = json.load(req.bounded_stream)
+        data = json.loads(body)
     except ValueError as exc:
         logger.warning(
             "Rejected CESR request on %s surface: malformed JSON path=%s remote=%s",
@@ -203,6 +214,8 @@ def _parseCesrHttpRequest(req: falcon.Request, *, surface: str) -> CesrRequest:
     return CesrRequest(
         payload=data,
         attachments=req.headers[CESR_ATTACHMENT_HEADER],
+        body=body,
+        genus={"1": Vrsn_1_0, "2": Vrsn_2_0}.get(genus),
     )
 
 
