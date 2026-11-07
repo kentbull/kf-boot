@@ -408,7 +408,7 @@ wheels = [
 [[package]]
 name = "keri"
 version = "2.1.0.dev1"
-source = { git = "https://github.com/kentbull/keripy.git?rev=65c80c7773992d7359d308bf2c99b41f693d5cc9#65c80c7773992d7359d308bf2c99b41f693d5cc9" }
+source = { git = "https://github.com/kentbull/keripy.git?rev=2b19fa875d8c803c613087102db51b9e07124588#2b19fa875d8c803c613087102db51b9e07124588" }
 dependencies = [
     { name = "apispec" },
     { name = "blake3" },
@@ -461,11 +461,11 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "falcon", specifier = ">=4.0.2" },
-    { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=65c80c7773992d7359d308bf2c99b41f693d5cc9" },
-    { name = "kf-observer", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-observer.git?rev=3c7bdacd43aa223221d3d86d154e485cc1c95358" },
-    { name = "kf-observer", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-observer.git?rev=3c7bdacd43aa223221d3d86d154e485cc1c95358" },
-    { name = "kf-registrar", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-registrar.git?rev=656f73f766af7ab818b5409b5ca5c987eec39df0" },
-    { name = "kf-registrar", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-registrar.git?rev=656f73f766af7ab818b5409b5ca5c987eec39df0" },
+    { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=2b19fa875d8c803c613087102db51b9e07124588" },
+    { name = "kf-observer", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-observer.git?rev=3855f05a28e3738aec05569020bfea2050695925" },
+    { name = "kf-observer", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-observer.git?rev=3855f05a28e3738aec05569020bfea2050695925" },
+    { name = "kf-registrar", marker = "extra == 'dev'", git = "https://github.com/kentbull/kf-registrar.git?rev=f0634584da5a5bd10ddd9208bfee09fa0f49c25f" },
+    { name = "kf-registrar", marker = "extra == 'test'", git = "https://github.com/kentbull/kf-registrar.git?rev=f0634584da5a5bd10ddd9208bfee09fa0f49c25f" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=9.0.2" },
     { name = "requests", specifier = ">=2.32.3" },
@@ -476,7 +476,7 @@ provides-extras = ["test", "dev"]
 [[package]]
 name = "kf-observer"
 version = "0.0.1"
-source = { git = "https://github.com/kentbull/kf-observer.git?rev=3c7bdacd43aa223221d3d86d154e485cc1c95358#3c7bdacd43aa223221d3d86d154e485cc1c95358" }
+source = { git = "https://github.com/kentbull/kf-observer.git?rev=3855f05a28e3738aec05569020bfea2050695925#3855f05a28e3738aec05569020bfea2050695925" }
 dependencies = [
     { name = "falcon" },
     { name = "hio" },
@@ -487,7 +487,7 @@ dependencies = [
 [[package]]
 name = "kf-registrar"
 version = "0.0.1"
-source = { git = "https://github.com/kentbull/kf-registrar.git?rev=656f73f766af7ab818b5409b5ca5c987eec39df0#656f73f766af7ab818b5409b5ca5c987eec39df0" }
+source = { git = "https://github.com/kentbull/kf-registrar.git?rev=f0634584da5a5bd10ddd9208bfee09fa0f49c25f#f0634584da5a5bd10ddd9208bfee09fa0f49c25f" }
 dependencies = [
     { name = "falcon" },
     { name = "hio" },
