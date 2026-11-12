@@ -10,6 +10,7 @@ from keri import help
 from kfboot.basing import (
     BOOT_OPERATION_ACCOUNT_DELETE,
     BOOT_OPERATION_ACCOUNT_SERVICES,
+    BOOT_OPERATION_DELEGATE_MAILBOX,
     BOOT_OPERATION_RESOURCE_DELETE,
     BOOT_OPERATION_SESSION_PROVISION,
     BOOT_OPERATION_WATCHER_STATUS_QUERY,
@@ -35,6 +36,15 @@ class BootOperationProcessor:
                 account_aid=account_aid, services=operation.payload.get("services"),
                 registry_boots=registry_boots, registry_clienter=self.registry_clienter,
                 operation_id=operation.operation_id, tymth=tymth, tock=tock,
+            ))
+        if operation.kind == BOOT_OPERATION_DELEGATE_MAILBOX:
+            account_aid = str(operation.payload.get("account_aid") or "")
+            aid = str(operation.payload.get("aid") or "")
+            if not account_aid or not aid or operation.requester != account_aid:
+                raise BootError("Mailbox operation must belong to the delegating account", status_code=400)
+            return (yield from self.provisioner.provisionDelegateMailboxDo(
+                account_aid=account_aid, aid=aid, operation_id=operation.operation_id,
+                witness_boots=witness_boots, tymth=tymth, tock=tock,
             ))
         if operation.kind == BOOT_OPERATION_SESSION_PROVISION:
             session_id = str(operation.payload.get("session_id") or operation.subject)

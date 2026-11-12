@@ -125,6 +125,51 @@ class Provisioner:
         self._serviceAccount(account_aid)
         return {"account_aid": account_aid, "services": capabilities}
 
+    def provisionDelegateMailboxDo(self, *, account_aid, aid, operation_id, witness_boots=None,
+                                   tymth, tock=0.0):
+        """Allocate one hosted mailbox bound to ``aid``, a delegate of ``account_aid``.
+
+        The mailbox is a witness-service controller slot assigned to the
+        delegate, used by the wallet in the mailbox role only: it is not in the
+        delegate's KEL. A retry returns the retained allocation.
+        """
+        self._serviceAccount(account_aid)
+        try:
+            self.exchanger.requireDelegate(account_aid, aid)
+        except falcon.HTTPError as ex:
+            raise BootError(ex.description or ex.title, status_code=ex.status_code) from ex
+        record = next((row for row in self.ctx.store.listResourcesForAccount(kind="mailbox", account_aid=account_aid)
+                       if row.cid == aid), None)
+        if record is None:
+            self._ensureCapacity(kind="mailbox", requested=1)
+            backend, = self._selectWitnessBackends(count=1, seed=aid)
+            client = self._witnessClient(backend.id, witness_boots=witness_boots)
+            created = yield from client.allocateWitnessDo(
+                aid, idempotency_key=f"{operation_id}:mailbox", tymth=tymth, tock=tock)
+            account = self.ctx.store.getAccount(account_aid)
+            record = makeRecord(
+                kind="mailbox", eid=str(created.get("eid", "")), backend_id=backend.id,
+                cid=aid, principal=account_aid, session_id="",
+                name=str(created.get("name", "") or "mailbox"),
+                identifier_alias="",
+                region_id=getattr(account, "region_id", "") or "",
+                region_name=getattr(account, "region_name", "") or "",
+                public_url=backend.public_url, boot_url=backend.boot_url,
+                oobis=list(created.get("oobis", []) or []),
+                status=str(created.get("status", "") or "allocated"),
+            )
+            if not record.eid or not record.oobis:
+                raise BootError("Mailbox allocation returned no endpoint", status_code=502)
+            # Retain cleanup debt before rechecking the account, so a deletion
+            # that overtook this allocation still finds and removes it.
+            self.ctx.store.addResource(record)
+            account = self._serviceAccount(account_aid)
+            if account.resources_cleaned_at:
+                account.resources_cleaned_at = ""
+                self.ctx.store.saveAccount(account)
+        return {"account_aid": account_aid, "aid": aid,
+                "mailbox": {"eid": record.eid, "url": record.url, "oobis": list(record.oobis)}}
+
     def _stopServiceActivation(self, account_aid):
         """Cancel queued enrollment; let an in-flight request finish before deletion can overtake it."""
         if not account_aid:
@@ -326,10 +371,12 @@ class Provisioner:
     def _ensureCapacity(self, *, kind: str, requested: int) -> None:
         if requested <= 0:
             return
-        count = self.ctx.store.countResources(kind)
+        # A delegate mailbox occupies a witness-service slot.
+        hosted = ("witness", "mailbox") if kind in ("witness", "mailbox") else (kind,)
+        count = sum(self.ctx.store.countResources(item) for item in hosted)
         limit = (
             self.ctx.config.witness_limit
-            if kind == "witness"
+            if kind in ("witness", "mailbox")
             else self.ctx.config.watcher_limit
         )
         
@@ -599,9 +646,10 @@ class Provisioner:
             account=account,
             sessions=sessions,
         )
-        services = [(kind, record.eid) for kind in ("registrar", "observer")
-                    for record in self.ctx.store.listResourcesForAccount(kind=kind, account_aid=account_aid)]
-        return services + self._resourceDeleteOps(watcher_ids=watcher_ids, witness_ids=witness_ids)
+        # Service grants and delegate mailboxes are bound to the account, never to a session.
+        bound = [(kind, record.eid) for kind in ("registrar", "observer", "mailbox")
+                 for record in self.ctx.store.listResourcesForAccount(kind=kind, account_aid=account_aid)]
+        return bound + self._resourceDeleteOps(watcher_ids=watcher_ids, witness_ids=witness_ids)
 
     @staticmethod
     def _resourceDeleteOps(*, watcher_ids: list[str], witness_ids: list[str]) -> list[tuple[str, str]]:
@@ -771,7 +819,7 @@ class Provisioner:
             self._removeResourceFromOwners(kind=kind, eid=eid, session=session, account=account)
             self._persistOwnerState(session=session, account=account)
             return
-        if kind == "witness":
+        if kind in ("witness", "mailbox"):
             boots = self.cleanup_witness_boots if witness_boots is None else witness_boots
             delete_remote = self._witnessClientForRecord(
                 record,

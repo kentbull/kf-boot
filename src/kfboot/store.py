@@ -91,8 +91,8 @@ def _resourceToApi(record: ResourceRecord, *, include_boot_url: bool = False) ->
     if not include_boot_url:
         data.pop("boot_url", None)
     data["oobis"] = list(_resourceValue(record, "oobis", []) or [])
-    if _resourceValue(record, "kind", "") == "witness":
-        data["witness_url"] = _resourceValue(record, "url", "")
+    if _resourceValue(record, "kind", "") in ("witness", "mailbox"):
+        data[f"{_resourceValue(record, 'kind', '')}_url"] = _resourceValue(record, "url", "")
     elif _resourceValue(record, "kind", "") == "watcher":
         data["watcher_url"] = _resourceValue(record, "url", "")
     return data
@@ -1500,7 +1500,7 @@ class Store:
         )
         candidates.extend(
             record.eid
-            for kind in ("watcher", "registrar", "observer")
+            for kind in ("watcher", "registrar", "observer", "mailbox")
             for record in self.listResourcesForAccount(kind=kind, account_aid=account.account_aid)
         )
         for session in sessions:
@@ -1524,7 +1524,7 @@ class Store:
         ]
         candidates.extend(
             record.eid
-            for kind in ("watcher", "registrar", "observer")
+            for kind in ("watcher", "registrar", "observer", "mailbox")
             for record in self.listResourcesForAccount(kind=kind, account_aid=account_aid)
         )
         for session in sessions:

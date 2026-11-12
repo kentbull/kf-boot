@@ -58,6 +58,7 @@ ONBOARDING_QUOTA_ROUTES = {
 
 ACCOUNT_ROUTES = {
     "/account/services",
+    "/account/mailboxes",
     "/operations/status",
     "/account/witnesses",
     "/account/watchers",

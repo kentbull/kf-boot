@@ -17,6 +17,7 @@ from kfboot.basing import (
     ACCOUNT_STATE_PENDING_ONBOARDING,
     BOOT_OPERATION_ACCOUNT_DELETE,
     BOOT_OPERATION_ACCOUNT_SERVICES,
+    BOOT_OPERATION_DELEGATE_MAILBOX,
     BOOT_OPERATION_FAILED,
     BOOT_OPERATION_PENDING,
     BOOT_OPERATION_RESOURCE_DELETE,
@@ -549,6 +550,47 @@ class AccountServicesHandler(RouteHandler):
         })
 
 
+class AccountMailboxHandler(RouteHandler):
+    """An account allocates a hosted mailbox for one identifier it delegated.
+
+    Each identifier that exchanges credentials needs its own receiving route.
+    A delegate created in the account holder's wallet has no witnesses of its
+    own, so the account asks for a mailbox bound to the delegate's AID. The
+    delegate's KEL, with the account's anchoring events, must already have
+    been accepted here, so the delegation is verified rather than claimed.
+    """
+    resource = "/account/mailboxes"
+
+    def verifyEvent(self, serder, **kwa) -> bool:
+        payload = extractExnPayload(serder)
+        if set(payload) - {"account_aid", "aid"}:
+            raise falcon.HTTPBadRequest(description="a mailbox request names only the account and its delegate")
+        self.exchanger.requireOnboardedAccount(serder.pre, payload)
+        self.exchanger.requireNoAccountDeletePending(serder.pre)
+        self.exchanger.requireDelegate(serder.pre, requiredStr(payload, "aid"))
+        self.exchanger.limiter.precheckAccountQuotas(serder)
+        return True
+
+    def handleEvent(self, serder, **kwa):
+        sender = serder.pre
+        payload = extractExnPayload(serder)
+        account = self.exchanger.requireOnboardedAccount(sender, payload)
+        self.exchanger.requireNoAccountDeletePending(sender)
+        aid = self.exchanger.requireDelegate(sender, requiredStr(payload, "aid"))
+        operation = self.exchanger.ctx.store.ensureBootOperation(
+            kind=BOOT_OPERATION_DELEGATE_MAILBOX,
+            subject=f"mailbox:{aid}", requester=sender, route=self.resource,
+            payload={"account_aid": sender, "aid": aid}, due_at=nowIso(),
+        )
+        self.exchanger.expirer.refreshAccountLease(account)
+        self.exchanger.limiter.recordSuccessfulAccountQuotaUse(serder)
+        self.exchanger.queueReply(self.resource, sender, {
+            "account_aid": sender,
+            "aid": aid,
+            "operation": self.exchanger.ctx.store.bootOperationPayload(operation),
+        })
+
+
 class AccountWitnessesHandler(RouteHandler):
     resource = "/account/witnesses"
 
@@ -915,6 +957,7 @@ class BootExchanger(Exchanger):
             AccountWitnessesHandler(self),
             AccountWatchersHandler(self),
             AccountServicesHandler(self),
+            AccountMailboxHandler(self),
             AccountWatcherStatusHandler(self),
             OperationStatusHandler(self),
             AccountDeleteHandler(self),
@@ -1190,6 +1233,21 @@ class BootExchanger(Exchanger):
             subject=f"account:{account_aid}",
             requester=account_aid,
         )
+
+    def requireDelegate(self, account_aid: str, aid: str) -> str:
+        """Return ``aid`` when its accepted KEL says ``account_aid`` delegated it."""
+        kever = self.ctx.habery.kevers.get(aid)
+        if kever is None:
+            raise falcon.HTTPConflict(
+                title="Unknown identifier",
+                description="Send the identifier's key event log, with its delegator's anchor, first.",
+            )
+        if aid == account_aid or kever.delpre != account_aid:
+            raise falcon.HTTPForbidden(
+                title="Not a delegate of this account",
+                description="A mailbox is allocated only for an identifier this account delegated.",
+            )
+        return aid
 
     def requireNoAccountDeletePending(self, account_aid: str) -> None:
         operation = self.activeAccountDeleteOperation(account_aid)
