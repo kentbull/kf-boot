@@ -120,6 +120,7 @@ Approved-account routes:
 - `exn /account/watchers`
 - `exn /account/watchers/status`
 - `exn /account/services`
+- `exn /account/mailboxes`
 - `exn /account/delete`
 - `exn /account/witnesses/delete`
 - `exn /account/watchers/delete`
@@ -176,6 +177,30 @@ waits for an in-flight request before revoking access. An expiry during activati
 does not produce a successful capability. Account expiry or deletion removes
 these grants without removing public evidence or fixed source-observer permissions.
 Cleanup of an older onboarding session preserves a live account's access.
+
+## Delegate mailboxes
+
+Every identifier that exchanges credentials needs its own receiving route. An
+identifier the account delegates in its own wallet has no witnesses, so the
+account can ask for a hosted mailbox bound to that delegate.
+
+First post the delegate's KEL to `POST /account`, preceded by the account's
+anchoring events with their witness receipts; the delegated inception carries
+its anchor's source seal. Then the account signs `exn /account/mailboxes` with
+attributes `aid` (the delegate) and optional `account_aid` (the signer). The
+request is refused unless kf-boot has accepted the delegate's KEL (409) and that
+KEL names the signing account as its delegator (403); an account cannot
+request a mailbox for itself or an unrelated identifier.
+
+The reply carries the normal asynchronous `operation` (kind
+`delegate_mailbox`, subject `mailbox:<aid>`). The worker allocates one slot on
+one configured witness backend, bound to the delegate's AID, and retains it as
+an account resource of kind `mailbox`. The succeeded `result` holds
+`account_aid`, `aid` and `mailbox` with `eid`, `url` and `oobis`. A repeated
+request returns the same mailbox. The wallet resolves the OOBI, gives the
+mailbox the delegate's KEL and authorizes it in the `mailbox` end role; the
+mailbox is not one of the delegate's witnesses. Mailboxes count against the
+witness capacity limit and are deleted with the account.
 
 ## Runtime Shape
 
