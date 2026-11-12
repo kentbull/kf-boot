@@ -10,21 +10,21 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "falcon>=4.0.2",
-    "keri @ git+https://github.com/kentbull/keripy.git@e60b0c9286225c0d002256552f53a083a62fcf09",
+    "keri @ git+https://github.com/kentbull/keripy.git@c5841f30d0d830bad62e0ab91e66d98a0afac20c",
     "requests>=2.32.3",
 ]
 
 [project.optional-dependencies]
 test = [
     "pytest>=9.0.2",
-    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@4895018a9fa2209db8fbd67b7198badf03aad6d2",
-    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@2bb8f844eb141e6da3e12e95d50ec2933161f11d",
+    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@d51327a90dac9203db35d6ed1f1441d72a40f2ec",
+    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@814890d3a7e692bb0b927a03b5835ad36ba4458b",
 ]
 dev = [
     "pytest>=9.0.2",
     "ruff==0.16.2",
-    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@4895018a9fa2209db8fbd67b7198badf03aad6d2",
-    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@2bb8f844eb141e6da3e12e95d50ec2933161f11d",
+    "kf-registrar @ git+https://github.com/kentbull/kf-registrar.git@d51327a90dac9203db35d6ed1f1441d72a40f2ec",
+    "kf-observer @ git+https://github.com/kentbull/kf-observer.git@814890d3a7e692bb0b927a03b5835ad36ba4458b",
 ]
 
 [project.scripts]
